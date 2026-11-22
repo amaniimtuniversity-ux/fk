@@ -90,6 +90,11 @@ https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Ad
 
 ## Troubleshooting
 
+- **`cannot import name 'runtime_version' from 'google.protobuf'`** (transformers import fails, both TTS
+  backends fail): a dependency downgraded protobuf. Run `!pip install -U "protobuf>=5.29,<7"`, then
+  **Run → Restart kernel**, then Cells 2–5 again (downloaded models in `/kaggle/tmp` survive a kernel
+  restart). Cell 1 now does this automatically and prints `OK    protobuf 5.x`.
+
 - **`GatedRepoError: 401 ... indic-parler-tts`:** expected without a token. Add `HF_TOKEN` (above) or
   continue — MMS Hindi is used and recorded in the manifest.
 
