@@ -5,7 +5,7 @@ with subtitles, ambience, and loudness-normalized audio. Built for **Kaggle T4 (
 
 ## Quick start (Kaggle)
 
-Open `notebooks/kaggle_freevideo_t4.ipynb`, run Cells 1–5, open the web UI, paste your script, generate.
+Open `notebooks/kaggle_freevideo_t4.ipynb`, run Cells 1–5, open the **public tunnel link** printed by Cell 5 (Kaggle has no port preview), paste your script, generate. Or use Cell 6 to generate without the browser.
 
 ## Quick start (local)
 

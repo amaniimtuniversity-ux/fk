@@ -46,29 +46,24 @@ class VideoRenderer:
 
     def mux_audio_subtitles(self, video: Path, audio: Path, srt: Optional[Path],
                             output_path: Path, grade: bool = True) -> tuple[bool, str]:
+        """Mux video + audio (+ optional SRT as a selectable mov_text track).
+
+        Subtitles are embedded as a soft track (not burned in) so the viewer can toggle them;
+        the colour grade is applied to the video stream only.
+        """
         if not ffmpeg_available():
             return False, "ffmpeg not found."
-        vf = "eq=contrast=1.05:saturation=1.1:brightness=0.01" if grade else None
+        has_srt = srt is not None and srt.exists() and srt.stat().st_size > 0
         cmd = ["ffmpeg", "-y", "-i", str(video), "-i", str(audio)]
-        if srt is not None and srt.exists():
+        if has_srt:
             cmd += ["-i", str(srt)]
-        filt = []
-        if vf:
-            filt.append(f"[0:v]{vf}[v]")
-            vmap = "[v]"
-        else:
-            vmap = "0:v"
-        if srt is not None and srt.exists():
-            filt.append("[2:s]subtitles=force_style='FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000'[s]")
-            cmd += ["-filter_complex", ";".join(filt), "-map", vmap, "-map", "1:a", "-map", "[s]",
-                    "-c:v", "libx264", "-crf", str(self.crf), "-c:s", "mov_text"]
-        else:
-            if filt:
-                cmd += ["-filter_complex", ";".join(filt), "-map", vmap, "-map", "1:a"]
-            else:
-                cmd += ["-map", vmap, "-map", "1:a"]
-            cmd += ["-c:v", "libx264", "-crf", str(self.crf)]
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest", str(output_path)]
+        if grade:
+            cmd += ["-vf", "eq=contrast=1.05:saturation=1.1:brightness=0.01"]
+        cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+        if has_srt:
+            cmd += ["-map", "2:s:0", "-c:s", "mov_text", "-metadata:s:s:0", "language=hin"]
+        cmd += ["-c:v", "libx264", "-crf", str(self.crf), "-preset", self.preset, "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", str(output_path)]
         return _run(cmd)
 
     def upscale_1080p(self, video: Path, output_path: Path) -> tuple[bool, str]:

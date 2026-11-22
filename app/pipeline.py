@@ -111,14 +111,22 @@ class Pipeline:
         if not narration_path.exists():
             tts = HindiTTSService(backend=tts_backend, model=SETTINGS.tts_model,
                                   voice_description=SETTINGS.tts_voice_description)
-            tts_result = tts.synthesize_script(project.script_original, narration_path)
-            ckpt.save_json("narration_manifest.json", tts_result.to_dict())
+            tts_obj = tts.synthesize_script(project.script_original, narration_path)
             tts.unload()
-            if tts_result.is_silent_fallback:
-                self.memory.warn(f"Narration used SILENT fallback: {tts_result.error}")
+            if not tts_obj.success:
+                ckpt.set_status("failed", {"error": f"TTS failed: {tts_obj.error}"})
+                raise RuntimeError(f"Narration (TTS) failed: {tts_obj.error}")
+            tts_result = tts_obj.to_dict()  # normalise: fresh run (dataclass) == resume (json dict)
+            ckpt.save_json("narration_manifest.json", tts_result)
+            if tts_obj.is_silent_fallback:
+                self.memory.warn(f"Narration used SILENT fallback: {tts_obj.error}")
         else:
             tts_result = ckpt.load_json("narration_manifest.json") or {}
-        self._report("narration", 1, 1, f"narration done ({tts_result.get('backend', '?')})")
+        if not narration_path.exists():
+            raise RuntimeError(f"Narration file missing after TTS: {narration_path}")
+        self._report("narration", 1, 1,
+                     f"narration done ({tts_result.get('backend', '?')}, "
+                     f"{tts_result.get('duration_seconds', 0)}s)")
 
         # Engine + registry
         checker = ModelCompatibilityChecker(report.capability, report.vram_total_bytes,
@@ -170,13 +178,25 @@ class Pipeline:
             ckpt.set_status("failed", {"error": f"concat failed: {err}"})
             raise RuntimeError(f"Concat failed: {err}")
         # Ambience + mix + loudnorm
+        self._report("render", 2, 3, "audio: ambience + mix + loudnorm")
         ambience_path = pdir / "ambience.m4a"
-        generate_ambience(ambience_path, seconds=max(5.0, len(scenes) * SETTINGS.scene_target_seconds),
-                          kind="wind" if style == "horror" else "drone")
+        ok, err = generate_ambience(ambience_path,
+                                    seconds=max(5.0, len(scenes) * SETTINGS.scene_target_seconds),
+                                    kind="wind" if style == "horror" else "drone")
+        if not ok:
+            ckpt.set_status("failed", {"error": f"ambience failed: {err}"})
+            raise RuntimeError(f"Ambience generation failed: {err}")
         mixed_path = pdir / "mixed.m4a"
-        mix_narration_ambience(narration_path, ambience_path, mixed_path)
+        ok, err = mix_narration_ambience(narration_path, ambience_path, mixed_path)
+        if not ok:
+            ckpt.set_status("failed", {"error": f"audio mix failed: {err}"})
+            raise RuntimeError(f"Audio mix failed: {err}")
         final_audio = pdir / "final_audio.m4a"
-        loudness_normalize(mixed_path, final_audio)
+        ok, err = loudness_normalize(mixed_path, final_audio)
+        if not ok:
+            ckpt.set_status("failed", {"error": f"loudnorm failed: {err}"})
+            raise RuntimeError(f"Loudness normalization failed: {err}")
+        self._report("render", 3, 3, "mux video + audio + subtitles")
         srt_path = write_srt([s.to_dict() for s in scenes], pdir / "subtitles.srt")
         final_path = pdir / "final.mp4"
         ok, err = renderer.mux_audio_subtitles(concat_path, final_audio, srt_path, final_path)

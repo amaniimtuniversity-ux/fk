@@ -4,7 +4,12 @@
 
 1. Kaggle → Notebooks → New Notebook. Settings: **Accelerator = GPU T4 x2** (or P100),
    **Internet = ON**, **Save version = Save**.
-2. Upload `freevideo-kaggle/` as a **Dataset** (or `git clone` this project + FreeVideo).
+2. Get this project onto Kaggle — **pick one**:
+   - **(A) GitHub (recommended):** push `freevideo-kaggle` to your own GitHub repo, then in
+     Cell 2 set `PROJECT_REPO = 'https://github.com/<you>/freevideo-kaggle.git'`.
+   - **(B) Kaggle Dataset:** Notebook → *Add Input* → *Upload* → *New Dataset*; upload the
+     `freevideo-kaggle` folder or a zip of it. Cell 2 auto-detects it under `/kaggle/input/`.
+     Leave `PROJECT_REPO` unchanged.
 3. Open `notebooks/kaggle_freevideo_t4.ipynb` and run Cells 1–5 in order.
 
 ## What each cell does
@@ -12,10 +17,11 @@
 | Cell | Action | Time |
 |---|---|---|
 | 1 | Install ffmpeg + CUDA 12.4 torch + diffusers stack | ~5–10 min |
-| 2 | Clone FreeVideo, apply T4/P100 patches | ~1 min |
+| 2 | Fetch this project (GitHub or Dataset), clone FreeVideo, apply T4/P100 patches | ~1 min |
 | 3 | Hardware + kernel probes (no download yet) | ~1 min |
 | 4 | Point HF cache at `/kaggle/working/.hf_cache` (persistent) | instant |
-| 5 | Launch web UI on port 5000 | instant |
+| 5 | Launch web UI + public Cloudflare tunnel link | ~20 s |
+| 6 | (Optional) generate directly from notebook, no browser | per script |
 
 ## Generate a video
 
@@ -54,6 +60,14 @@ Then use `/api/send-telegram` / `/api/upload-youtube`. Secrets are env-only, nev
 3. `KaggleStorageManager.verify_cached()` confirms the snapshot before reuse.
 
 ## Troubleshooting
+
+- **Web UI link does not open / `127.0.0.1:5000` refuses:** Kaggle has **no port preview**
+  (unlike Colab). Only the `https://....trycloudflare.com` URL printed by Cell 5 works, and only
+  while the session is alive. If it still fails, re-run Cell 5 (gets a fresh URL) or use Cell 6.
+
+- **`FileNotFoundError: /kaggle/working/freevideo-kaggle`** or **`PROJECT NOT FOUND`** in Cell 2:
+  the project itself was never fetched. Set `PROJECT_REPO` to your GitHub URL *or* attach the
+  project as a Dataset input (see Setup step 2), then re-run Cell 2.
 
 | Symptom | Fix |
 |---|---|

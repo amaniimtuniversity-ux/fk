@@ -24,12 +24,13 @@ def _run(cmd: list[str]) -> tuple[bool, str]:
 
 
 def loudness_normalize(input_path: Path, output_path: Path, target_lufs: float = -16.0) -> tuple[bool, str]:
-    """Two-pass loudnorm (single-pass fallback if measurement fails)."""
+    """EBU R128 loudnorm to target LUFS (single pass), output 48 kHz AAC."""
     if not ffmpeg_available():
         return False, "ffmpeg not found. Install ffmpeg (Kaggle: apt-get install -y ffmpeg)."
     ok, err = _run([
         "ffmpeg", "-y", "-i", str(input_path),
         "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11",
+        "-ar", "48000",  # loudnorm upsamples to 192 kHz internally; pin a standard rate
         "-c:a", "aac", "-b:a", "192k", str(output_path),
     ])
     return ok, err

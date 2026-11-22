@@ -20,12 +20,18 @@ def code(text: str) -> dict:
             "source": text.splitlines(keepends=True)}
 
 
+CELL5 = "# Cell 5 — Launch web UI + PUBLIC link (Kaggle has no port preview; we use a free Cloudflare quick tunnel)\nimport sys, threading, time, urllib.request\nsys.path.insert(0, '/kaggle/working/freevideo-kaggle')\nfrom app.server import run\nfrom scripts.tunnel import start_tunnel\nif not globals().get('_ui_thread'):\n    _ui_thread = threading.Thread(target=run, kwargs={'host': '0.0.0.0', 'port': 5000}, daemon=True)\n    _ui_thread.start(); time.sleep(2)\nurl = start_tunnel(5000)\nfor _ in range(20):  # wait for the tunnel DNS to go live (~10-20 s)\n    try:\n        urllib.request.urlopen(url + '/api/health', timeout=10); break\n    except Exception:\n        time.sleep(3)\nprint('\\n' + '=' * 70)\nprint('OPEN THIS IN YOUR BROWSER  ->', url)\nprint('=' * 70)\nprint('Link stays alive only while this notebook session is running.')\nprint('Paste your Hindi script, preview voice, then Start generation.')"
+
+CELL6 = '# Cell 6 — (OPTIONAL, no browser needed) Generate directly from the notebook\n# Use this if the tunnel link is blocked for you. Paste your script between the triple quotes.\nSCRIPT = """\nयहाँ अपनी हिंदी स्क्रिप्ट पेस्ट करें।\n"""\nENGINE, PROFILE, STYLE, TTS = \'wan2.1\', \'balanced\', \'horror\', \'indic-parler\'\nRESUME_PROJECT_ID = None   # set to a previous project_id to resume after a session cut\n\nimport sys; sys.path.insert(0, \'/kaggle/working/freevideo-kaggle\')\nfrom app.pipeline import Pipeline\ndef _progress(stage, done, total, msg=\'\'): print(f\'[{stage}] {done}/{total} {msg}\', flush=True)\nif SCRIPT.strip() and \'अपनी हिंदी स्क्रिप्ट पेस्ट\' not in SCRIPT:\n    manifest = Pipeline(progress=_progress).run(SCRIPT.strip(), engine_id=ENGINE, profile=PROFILE,\n                                               style=STYLE, tts_backend=TTS, resume_project_id=RESUME_PROJECT_ID)\n    print(\'project_id:\', manifest[\'project_id\']); print(\'FINAL MP4:\', manifest[\'final\'])\n    print(\'seconds:\', manifest[\'seconds\'], \'| scenes:\', len(manifest[\'scenes\']))\n    from IPython.display import Video, display; display(Video(manifest[\'final\'], embed=True, width=640))\nelse:\n    print(\'Paste your script into SCRIPT above, then re-run this cell.\')'
+
+
 def build() -> dict:
     cells = [
         md("# FreeVideo-Kaggle — Hindi Script to Video on T4/P100\n\n"
            "Production low-VRAM AI video pipeline. Primary engine: **Wan2.1-T2V-1.3B (FP16)**.\n"
            "FreeVideo H3 is included as an optional experimental engine (see AUDIT.md).\n\n"
-           "**Steps:** 1) Install 2) Probe kernels 3) Launch web UI 4) Paste script → Generate → Download.\n"
+           "**Steps:** 1) Install 2) Probe kernels 3) Launch web UI + public link 4) Paste script → Generate → Download. "
+           "Cell 6 = generate without the browser UI.\n"
            "Settings: Accelerator = GPU T4 x2 (or P100), Internet = ON, Save version = Save."),
         code("# Cell 1 — Install system + Python deps (CUDA 12.4 stack for T4/P100)\n"
              "!apt-get update -qq && apt-get install -y -qq ffmpeg > /dev/null 2>&1; echo ffmpeg done\n"
@@ -84,15 +90,10 @@ def build() -> dict:
              "os.environ['HF_HUB_CACHE'] = '/kaggle/working/.hf_cache/hub'\n"
              "os.environ['FREEVVIDEO_REPO'] = '/kaggle/working/FreeVideo'\n"
              "print('HF cache ->', os.environ['HF_HOME'])"),
-        code("# Cell 5 — Launch web UI (runs in background; open the preview URL)\n"
-             "import sys, threading; sys.path.insert(0, '/kaggle/working/freevideo-kaggle')\n"
-             "from app.server import run\n"
-             "t = threading.Thread(target=run, kwargs={'host': '0.0.0.0', 'port': 5000}, daemon=True)\n"
-             "t.start()\n"
-             "print('Web UI starting on port 5000 — use the Kaggle preview link.')\n"
-             "print('Paste your Hindi script, preview voice, then Start generation.')"),
+        code(CELL5),
+        code(CELL6),
         md("## Manual steps\n"
-           "1. Open the web UI preview URL.\n"
+           "1. Open the public `https://....trycloudflare.com` link printed by Cell 5 (Kaggle has no built-in port preview).\n"
            "2. Paste your Hindi/Hinglish script (stored verbatim).\n"
            "3. Select engine (Wan2.1 recommended), profile, style, TTS.\n"
            "4. Preview narration audio.\n"
@@ -101,8 +102,8 @@ def build() -> dict:
            "7. Optional: set TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars for Telegram; "
            "YOUTUBE_CLIENT_SECRETS for YouTube upload.\n\n"
            "## Session recovery\n"
-           "If the session ends mid-generation, re-run Cells 1–5 and call the API with "
-           "`resume_project_id` (shown in the UI manifest) — completed scenes are skipped."),
+           "If the session ends mid-generation, re-run Cells 1–5, then either call the API with "
+           "`resume_project_id` or set `RESUME_PROJECT_ID` in Cell 6 — completed scenes are skipped."),
     ]
     return {
         "cells": cells,
