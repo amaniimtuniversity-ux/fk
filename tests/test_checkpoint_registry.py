@@ -27,17 +27,17 @@ def test_checkpoint_partial_cleanup(tmp_path):
 
 def test_registry_recommends_wan_on_t4():
     # Kaggle T4: 15GB VRAM, 29GB RAM, model cache on /kaggle/tmp (~60GB free)
-    checker = ModelCompatibilityChecker((7, 5), 15 * 10**9, 29 * 10**9, 60 * 10**9)
+    checker = ModelCompatibilityChecker((7, 5), 15 * 10**9, 29 * 10**9, 60 * 10**9, cache_lookup=lambda r: 0)
     reg = VideoModelRegistry(checker)
     assert reg.recommend().id == "wan2.1-1.3b"
 
 
 def test_registry_rejects_wan_when_cache_on_20gb_working_quota():
     # Wan2.1-Diffusers is 28.9GB on disk: it must never be downloaded into the 20GB /kaggle/working
-    checker = ModelCompatibilityChecker((7, 5), 15 * 10**9, 29 * 10**9, 20 * 10**9)
+    checker = ModelCompatibilityChecker((7, 5), 15 * 10**9, 29 * 10**9, 20 * 10**9, cache_lookup=lambda r: 0)
     reg = VideoModelRegistry(checker)
     res = checker.check(reg.get("wan2.1-1.3b"))
-    assert not res["compatible"] and any("disk" in r.lower() for r in res["reasons"])
+    assert not res["compatible"] and any("more download" in r for r in res["reasons"])
 
 
 def test_h3_incompatible_on_kaggle():

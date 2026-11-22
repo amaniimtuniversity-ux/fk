@@ -15,9 +15,81 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Optional
+
+
+def hf_hub_cache_dir() -> Path:
+    """Where huggingface_hub will actually write model files right now."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"])
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]) / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def repo_cache_dir(repo_id: str, hub_cache: Optional[Path] = None) -> Path:
+    return (hub_cache or hf_hub_cache_dir()) / ("models--" + repo_id.replace("/", "--"))
+
+
+def cached_bytes(repo_id: str, hub_cache: Optional[Path] = None) -> int:
+    """Bytes of `repo_id` already present in the HF cache (complete blobs only; partial .incomplete
+    files are excluded). 0 if not cached. Pure filesystem walk — no network."""
+    d = repo_cache_dir(repo_id, hub_cache) / "blobs"
+    if not d.is_dir():
+        return 0
+    total = 0
+    for f in d.iterdir():
+        if f.is_file() and not f.name.endswith(".incomplete"):
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _free_bytes(path: Path) -> int:
+    p = path
+    while not p.exists() and p.parent != p:
+        p = p.parent
+    try:
+        return shutil.disk_usage(p).free
+    except OSError:
+        return 0
+
+
+def choose_cache_dir(min_free_bytes: int, apply_env: bool = True) -> tuple[Path, int, list[str]]:
+    """Pick an HF cache location with enough free space and (optionally) point HF_HOME/HF_HUB_CACHE at it.
+
+    Order: current HF_HOME (keep whatever is already cached there) -> /kaggle/tmp -> /tmp -> cwd.
+    On Kaggle /kaggle/working has a HARD 20GB quota, so it is only used as a last resort.
+    Returns (chosen_hub_cache_dir, free_bytes, notes).
+    """
+    notes: list[str] = []
+    current = hf_hub_cache_dir()
+    candidates: list[Path] = [current]
+    for c in (Path("/kaggle/tmp/.hf_cache/hub"), Path("/tmp/.hf_cache/hub"), Path.cwd() / ".hf_cache" / "hub"):
+        if c not in candidates:
+            candidates.append(c)
+    best: Optional[tuple[Path, int]] = None
+    for c in candidates:
+        free = _free_bytes(c)
+        notes.append(f"{c}: free {free / 1e9:.1f} GB")
+        if free >= min_free_bytes:
+            best = (c, free)
+            break
+        if best is None or free > best[1]:
+            best = (c, free)
+    chosen, free = best  # type: ignore[misc]
+    if chosen != current:
+        notes.append(f"relocating HF cache {current} -> {chosen} (need {min_free_bytes / 1e9:.1f} GB)")
+    if apply_env:
+        chosen.mkdir(parents=True, exist_ok=True)
+        os.environ["HF_HUB_CACHE"] = str(chosen)
+        os.environ["HF_HOME"] = str(chosen.parent)
+    return chosen, free, notes
 
 
 class KaggleStorageManager:

@@ -116,11 +116,24 @@ MODELS: dict[str, ModelSpec] = {
 
 
 class ModelCompatibilityChecker:
-    def __init__(self, capability: tuple[int, int], vram_bytes: int, ram_bytes: int, disk_free_bytes: int):
+    def __init__(self, capability: tuple[int, int], vram_bytes: int, ram_bytes: int, disk_free_bytes: int,
+                 cache_lookup=None, disk_path: str = ""):
         self.capability = capability
         self.vram_bytes = vram_bytes
         self.ram_bytes = ram_bytes
         self.disk_free_bytes = disk_free_bytes
+        # callable(repo_id) -> bytes already in the HF cache; default = real filesystem walk
+        from .kaggle_storage import cached_bytes as _cached
+
+        self.cache_lookup = cache_lookup or _cached
+        self.disk_path = disk_path
+
+    def remaining_download_bytes(self, spec: ModelSpec) -> int:
+        try:
+            have = int(self.cache_lookup(spec.hf_repo))
+        except Exception:
+            have = 0
+        return max(0, int(spec.download_gb * 1e9) - have)
 
     def check(self, spec: ModelSpec) -> dict[str, Any]:
         reasons: list[str] = []
@@ -134,9 +147,13 @@ class ModelCompatibilityChecker:
         if spec.ram_gb * 1e9 > self.ram_bytes:
             ok = False
             reasons.append(f"Needs ~{spec.ram_gb}GB RAM for offload, have {self.ram_bytes/1e9:.1f}GB")
-        if spec.download_gb * 1e9 > self.disk_free_bytes:
+        remaining = self.remaining_download_bytes(spec)
+        if remaining > self.disk_free_bytes:
             ok = False
-            reasons.append(f"Download {spec.download_gb}GB exceeds free disk {self.disk_free_bytes/1e9:.1f}GB")
+            where = f" at {self.disk_path}" if self.disk_path else ""
+            reasons.append(f"Needs {remaining/1e9:.1f}GB more download (model {spec.download_gb}GB, "
+                           f"{(spec.download_gb*1e9-remaining)/1e9:.1f}GB cached) but only "
+                           f"{self.disk_free_bytes/1e9:.1f}GB free{where}")
         if spec.status == "unsupported":
             ok = False
             reasons.append("Marked unsupported for Kaggle T4/P100")

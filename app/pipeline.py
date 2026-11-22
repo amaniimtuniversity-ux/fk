@@ -129,11 +129,22 @@ class Pipeline:
                      f"{tts_result.get('duration_seconds', 0)}s)")
 
         # Engine + registry
+        from .kaggle_storage import cached_bytes, choose_cache_dir
+
+        model_id = {"wan2.1": "wan2.1-1.3b", "cogvideox": "cogvideox-2b",
+                    "svd": "svd-xt", "freevideo-h3": "freevideo-h3"}.get(engine_id, engine_id)
+        pre_spec = VideoModelRegistry(ModelCompatibilityChecker(report.capability, report.vram_total_bytes,
+                                                                report.ram_total_bytes, 10**18)).get(model_id)
+        need = max(0, int(pre_spec.download_gb * 1e9) - cached_bytes(pre_spec.hf_repo))
+        cache_dir, cache_free, cache_notes = choose_cache_dir(int(need * 1.05) + 2 * 10**9)
+        self._report("storage", 1, 1, f"HF cache {cache_dir} (free {cache_free/1e9:.1f} GB, "
+                                      f"need {need/1e9:.1f} GB more for {pre_spec.hf_repo})")
+        for n in cache_notes:
+            self.memory.warnings.append(f"storage: {n}") if "relocating" in n else None
         checker = ModelCompatibilityChecker(report.capability, report.vram_total_bytes,
-                                            report.ram_total_bytes, report.disk_free_bytes)
+                                            report.ram_total_bytes, cache_free, disk_path=str(cache_dir))
         registry = VideoModelRegistry(checker)
-        spec = registry.get({"wan2.1": "wan2.1-1.3b", "cogvideox": "cogvideox-2b",
-                             "svd": "svd-xt", "freevideo-h3": "freevideo-h3"}.get(engine_id, engine_id))
+        spec = registry.get(model_id)
         compat = checker.check(spec)
         if not compat["compatible"] and spec.status != "experimental":
             raise RuntimeError(f"Model {spec.id} incompatible: {compat['reasons']}")
