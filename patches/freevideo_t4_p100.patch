@@ -1,0 +1,68 @@
+diff --git a/freevideo_engine/backends/cuda.py b/freevideo_engine/backends/cuda.py
+index 5231ab9..aacadfb 100644
+--- a/freevideo_engine/backends/cuda.py
++++ b/freevideo_engine/backends/cuda.py
+@@ -74,6 +74,14 @@ class CUDABackend(DeviceBackend):
+     def prepare_linears(self, model, manifest, linear_compute, fp8_gemm):
+         if linear_compute not in self.capabilities.linear_policies:
+             raise ValueError('Unknown linear compute policy')
++        # T4/P100: FP8 weights must be dequantized to FP16 on CPU first.
++        # Never pretend FP8 storage = FP8 execution on SM75/SM60.
++        import os as _os
++        if _os.environ.get('FREEVVIDEO_T4_P100', '') == '1' and manifest.get('precision') == 'fp8':
++            raise ValueError(
++                'FP8 checkpoints cannot execute natively on SM75/SM60. '
++                'Convert with app.precision.convert_checkpoint_fp8_to_fp16() first, '
++                'then load as BF16/FP16 weights.')
+         precision = manifest.get('precision', 'bf16')
+         actual_fp8_gemm = None
+         if precision == 'fp8':
+diff --git a/freevideo_engine/backends/cuda_attention.py b/freevideo_engine/backends/cuda_attention.py
+index 5978359..0dbde89 100644
+--- a/freevideo_engine/backends/cuda_attention.py
++++ b/freevideo_engine/backends/cuda_attention.py
+@@ -7,6 +7,15 @@ class CUDAAttentionKernels:
+         choices = ('cudnn', 'torch-flash', 'sage2', 'fa2', 'fa4')
+         if global_backend not in choices or window_backend not in choices:
+             raise ValueError('Unknown CUDA attention backend')
++        # T4/P100 guard: FA2/FA4/Sage2 require SM80+. Fail fast with a clear
++        # message instead of a cryptic Triton/CUDA error deep in the stack.
++        import os as _os
++        if _os.environ.get('FREEVVIDEO_T4_P100', '') == '1':
++            import torch as _t
++            if _t.cuda.is_available() and _t.cuda.get_device_capability() < (8, 0):
++                if global_backend in ('fa2', 'fa4', 'sage2') or window_backend in ('fa2', 'fa4', 'sage2'):
++                    raise ValueError(
++                        'FA2/FA4/Sage2 require SM80+. On T4/P100 use cudnn or torch-flash (SDPA).')
+         if 'fa4' in (global_backend, window_backend):
+             from ..fa4_guard import check_selected
+             check_selected()
+diff --git a/freevideo_engine/hardware.py b/freevideo_engine/hardware.py
+index 78a52cb..fed5aa5 100644
+--- a/freevideo_engine/hardware.py
++++ b/freevideo_engine/hardware.py
+@@ -58,7 +58,12 @@ class Hardware:
+         known = (len(capability) == 2 and all(type(v) is int for v in capability)
+                  and capability[0] > 0 and 0 <= capability[1] <= 9)
+         sm = '%d%d' % capability if known else 'unknown'
+-        admitted = known and capability >= (8, 0)
++        # T4/P100 patch: admit SM60+ for FP16 fallback path. Admission here
++        # only permits setup; kernel probes (doctor --probe) still decide
++        # readiness. BF16/FP8 native paths remain gated below.
++        import os as _os
++        _allow_legacy = _os.environ.get('FREEVVIDEO_T4_P100', '') == '1'
++        admitted = known and (capability >= (8, 0) or (_allow_legacy and capability >= (6, 0)))
+         status = ('probe-required' if admitted else
+                   'CUDA_ARCH_UNSUPPORTED' if known else 'CUDA_CAPABILITY_UNKNOWN')
+         detail = '%s (SM%s; compute capability %s; driver %s)' % (
+@@ -69,7 +74,9 @@ class Hardware:
+             if known:
+                 error = ('[CUDA_ARCH_UNSUPPORTED] ' + detail + '. FreeVideo requires '
+                          'native BF16 GPU computation (compute capability 8.0 / SM80 or newer). '
+-                         'This GPU is below that hardware requirement; a driver update cannot add it.')
++                         'This GPU is below that hardware requirement; a driver update cannot add it. '
++                         'For T4/P100, set FREEVVIDEO_T4_P100=1 to attempt the FP16 fallback path '
++                         '(experimental; see AUDIT.md).')
+             else:
+                 error = ('[CUDA_CAPABILITY_UNKNOWN] Could not determine the CUDA architecture of '
+                          + detail + '. GPU detection did not return a valid compute capability. '
