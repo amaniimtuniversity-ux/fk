@@ -99,6 +99,17 @@ https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Ad
    checked: its duration must equal the narration timeline or the job fails loudly.
 5. `final_manifest.json` → `timeline` shows per scene: speech seconds, clip seconds, slow factor, segment.
 
+## Hinglish / English / numbers in the script (MMS fallback)
+
+The open MMS Hindi voice only knows Devanagari letters. Latin words, digits and `...` would be dropped
+silently (and an all-Latin sentence used to crash with *"Expected tensor ... got torch.cuda.FloatTensor"*).
+The pipeline now sends a **pronunciation copy** to the voice: numbers → Hindi words (`12:30` → बारह तीस),
+Hinglish → Devanagari (`darwaza khola` → दरवाज़ा खोला), acronyms → letter names (`CID` → सी आई डी),
+common English words from a dictionary (`police station` → पुलिस स्टेशन). Subtitles and the manifest keep
+your original text; `narration_manifest.json → scenes[].pronunciation` shows exactly what was spoken.
+Best quality for English words: write them in Devanagari, or enable Indic Parler-TTS (accept the licence on
+HF + `HF_TOKEN` secret) which reads Latin text natively.
+
 ## Troubleshooting
 
 - **`cannot import name 'runtime_version' from 'google.protobuf'`** (transformers import fails, both TTS
@@ -133,4 +144,5 @@ https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Ad
 | OOM during generation | Switch profile to Low VRAM / CPU-Assisted. Check `benchmark_results.json`. |
 | TTS gated repo error | Accept terms at huggingface.co/ai4bharat/indic-parler-tts once. |
 | Silent narration | TTS backend failed — check `narration_manifest.json` error. Do not ship silent videos. |
+| `Expected tensor ... 'indices' ... torch.cuda.FloatTensor` in TTS | Sentence had no Devanagari (Hinglish/English/`...`). Fixed by the pronunciation normaliser — pull latest (Cell 1) and restart. |
 | ffmpeg missing | Re-run Cell 2 (`apt-get install ffmpeg`). |

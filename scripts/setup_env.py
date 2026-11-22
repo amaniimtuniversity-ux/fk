@@ -26,7 +26,7 @@ import sys
 
 CORE = [
     "transformers==4.46.1", "diffusers==0.33.1", "accelerate>=1.1", "safetensors", "sentencepiece",
-    "huggingface_hub>=0.26,<1.0", "soundfile", "imageio[ffmpeg]", "flask", "psutil", "av", "einops", "ftfy",
+    "huggingface_hub>=0.26,<1.0", "soundfile", "indic-transliteration", "imageio[ffmpeg]", "flask", "psutil", "av", "einops", "ftfy",
     "numpy", "pillow", "requests", "python-dotenv", "scipy",
 ]
 PARLER = ["--no-deps", "parler-tts==0.2.3"]
@@ -70,6 +70,7 @@ def verify() -> dict[str, bool]:
     res["mms"] = check("transformers", "VitsModel", "MMS Hindi TTS (VitsModel)")
     res["parler"] = check("parler_tts", "ParlerTTSForConditionalGeneration", "Indic Parler-TTS (optional)")
     res["soundfile"] = check("soundfile", None, "soundfile")
+    res["indic_transliteration"] = check("indic_transliteration", None, "indic-transliteration (Hinglish->Devanagari for MMS TTS)")
     res["imageio"] = check("imageio", None, "imageio")
     try:
         import torch
@@ -85,7 +86,7 @@ def verify() -> dict[str, bool]:
 
 def required_ok(res: dict[str, bool]) -> bool:
     return all(res[k] for k in ("protobuf", "torch", "transformers", "transformers.modeling_utils",
-                                "diffusers", "mms", "soundfile", "imageio"))
+                                "diffusers", "mms", "soundfile", "imageio", "indic_transliteration"))
 
 
 def main() -> int:

@@ -141,9 +141,12 @@ class Pipeline:
                 if used_backend is None and r.backend != tts_backend:
                     self.memory.warn(f"TTS fallback: requested {tts_backend}, used {r.backend}. {r.error}")
                 used_backend = r.backend
+                for w in r.warnings:
+                    self.memory.warn(f"TTS scene {i + 1}: {w}")
                 scene_audio.append({"index": i, "path": str(wav), "seconds": round(audio_duration(wav), 3),
                                     "backend": r.backend, "sample_rate": r.sample_rate,
-                                    "is_silent_fallback": r.is_silent_fallback})
+                                    "is_silent_fallback": r.is_silent_fallback,
+                                    "warnings": r.warnings, "pronunciation": r.pronunciation})
             tts.unload()
             narr_manifest = {"script_hash": project.script_hash, "backend": used_backend,
                              "scenes": scene_audio,

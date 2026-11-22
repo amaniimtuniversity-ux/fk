@@ -10,6 +10,7 @@ protobuf>=5.29,<7          # MUST be installed last; Kaggle *_pb2 modules need r
 huggingface_hub>=0.26,<1.0  # 1.x removed APIs used by transformers 4.46
 scipy
 soundfile
+indic-transliteration        # Hinglish/English words -> Devanagari so MMS Hindi TTS speaks them (vocab is Devanagari-only)
 imageio[ffmpeg]
 av
 einops

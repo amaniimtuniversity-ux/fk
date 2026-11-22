@@ -18,7 +18,7 @@ Original script is never modified (tts_safe_copy is used for synthesis).
 from __future__ import annotations
 
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,9 +34,12 @@ class TTSResult:
     sample_rate: int = 24000
     error: str = ""
     is_silent_fallback: bool = False
+    warnings: list[str] = field(default_factory=list)
+    pronunciation: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "warnings": self.warnings, "pronunciation": self.pronunciation,
             "success": self.success, "audio_path": str(self.audio_path) if self.audio_path else None,
             "duration_seconds": round(self.duration_seconds, 2), "backend": self.backend,
             "sample_rate": self.sample_rate, "error": self.error,
@@ -92,6 +95,10 @@ class HindiTTSService:
         self._model = None
         self._tokenizer = None
         self._desc_tokenizer = None
+        self.warnings: list[str] = []
+        self.pronunciation_log: list[dict[str, str]] = []
+        self._fallback: Optional["HindiTTSService"] = None
+        self._fallback_reason = ""
 
     def _resolve_device(self) -> str:
         if self.device != "auto":
@@ -150,10 +157,30 @@ class HindiTTSService:
         device = getattr(self, "_device", "cpu")
         text = tts_safe_copy(sentence)
         if self.backend == "mms-hin":
-            inputs = self._tokenizer(text, return_tensors="pt").to(device)
+            import numpy as np
+
+            from .hindi_text import has_speakable_devanagari, normalize_for_mms
+
+            sr = int(self._model.config.sampling_rate)
+            # MMS-hin vocab is Devanagari-only: numbers/Latin/symbols would be dropped silently and a
+            # fully-Latin sentence gives an EMPTY (float) tensor -> CUDA embedding error. Normalise first.
+            spoken = normalize_for_mms(text)
+            if spoken != text:
+                self.pronunciation_log.append({"original": text, "spoken": spoken})
+            if not has_speakable_devanagari(spoken):
+                # e.g. "..." -> nothing to say; keep timing with a short pause instead of crashing
+                self.warnings.append(f"no speakable text in sentence {text!r}; inserted 0.4s pause")
+                return np.zeros(int(0.4 * sr), dtype="float32"), sr
+            inputs = self._tokenizer(spoken, return_tensors="pt")
+            ids = inputs["input_ids"]
+            if ids.numel() == 0:
+                self.warnings.append(f"tokenizer produced no tokens for {spoken!r}; inserted 0.4s pause")
+                return np.zeros(int(0.4 * sr), dtype="float32"), sr
+            inputs = {k: (v.long() if k in ("input_ids", "attention_mask") else v).to(device)
+                      for k, v in inputs.items()}
             with torch.no_grad():
                 wav = self._model(**inputs).waveform
-            return wav.squeeze().float().cpu().numpy(), int(self._model.config.sampling_rate)
+            return wav.squeeze().float().cpu().numpy(), sr
         desc = self._desc_tokenizer(self.voice_description, return_tensors="pt").to(device)
         prompt = self._tokenizer(text, return_tensors="pt").to(device)
         with torch.no_grad():
@@ -174,6 +201,12 @@ class HindiTTSService:
         sentences = split_sentences(script)
         if not sentences:
             return TTSResult(success=False, error="No sentences in script.")
+        if self._fallback is not None:
+            # Parler already failed earlier in this job (e.g. gated) -> keep using the loaded fallback
+            # instead of retrying the 401 + reloading MMS for every scene.
+            res = self._fallback.synthesize_script(script, output_path, pause_seconds)
+            res.error = (self._fallback_reason + " -> used mms-hin fallback" + (f" | {res.error}" if res.error else ""))
+            return res
         try:
             import numpy as np
             import soundfile as sf
@@ -192,6 +225,7 @@ class HindiTTSService:
                 success=True, audio_path=output_path,
                 duration_seconds=len(full) / sr, backend=self.backend,
                 sample_rate=sr, is_silent_fallback=(self.backend == "silent"),
+                warnings=list(self.warnings), pronunciation=list(self.pronunciation_log),
             )
         except Exception as e:
             first = f"{self.backend} failed: {type(e).__name__}: {str(e)[:300]}"
@@ -206,8 +240,11 @@ class HindiTTSService:
                 fb = HindiTTSService(backend="mms-hin", model=MMS_HINDI_REPO, sample_rate=self.sample_rate,
                                      device=self.device, allow_fallback=False)
                 res = fb.synthesize_script(script, output_path, pause_seconds)
-                fb.unload()
                 res.error = (first + hint + " -> used mms-hin fallback" + (f" | {res.error}" if res.error else ""))
+                if res.success:
+                    self._fallback, self._fallback_reason = fb, first + hint
+                else:
+                    fb.unload()
                 return res
             return TTSResult(success=False, backend=self.backend, error=first)
 
@@ -215,6 +252,9 @@ class HindiTTSService:
         return self.synthesize_script(text, output_path)
 
     def unload(self) -> None:
+        if self._fallback is not None:
+            self._fallback.unload()
+            self._fallback = None
         self._model = None
         try:
             import gc
