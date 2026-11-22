@@ -1,21 +1,22 @@
-# Kaggle T4/P100 pinned stack (CUDA 12.4 — last line with full SM60 support).
-# Install order matters: torch first, then diffusers stack.
-# NOTE: P100 (SM60) needs torch<=2.5.x + CUDA 12.4. Newer torch drops Pascal.
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
-diffusers==0.32.2
-transformers==4.46.3
-accelerate==1.1.1
-safetensors==0.4.5
-huggingface_hub==0.26.2
-einops==0.8.0
-sentencepiece==0.2.0
-parler-tts==0.2.1
-soundfile==0.12.1
-imageio[ffmpeg]==2.37.0
-av>=14
-# Optional (T4 only, SM75): xformers for memory-efficient attention.
-# DO NOT install on P100 (SM60 unsupported).
-# xformers==0.0.28.post2
-# YouTube upload (optional):
-# google-api-python-client, google-auth-oauthlib
+# Kaggle GPU stack. Do NOT pin torch here: use the CUDA torch preinstalled in the Kaggle image
+# (verified working on T4 in-session). Install order matters; see notebooks/kaggle_freevideo_t4.ipynb Cell 1.
+transformers==4.46.1        # exact pin required by parler-tts 0.2.3 (best Hindi TTS)
+diffusers==0.33.1           # first release with WanPipeline; compatible with transformers 4.46.1
+accelerate>=1.1
+safetensors
+sentencepiece
+protobuf
+huggingface_hub>=0.26
+soundfile
+imageio[ffmpeg]
+av
+einops
+ftfy
+flask
+psutil
+numpy
+pillow
+requests
+python-dotenv
+# Optional (gated model, best quality): install with --no-deps so it cannot move torch/transformers
+# pip install --no-deps parler-tts==0.2.3 && pip install descript-audio-codec

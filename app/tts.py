@@ -112,7 +112,8 @@ class HindiTTSService:
             from transformers import AutoTokenizer
 
             device = self._resolve_device()
-            self._model = ParlerTTSForConditionalGeneration.from_pretrained(self.model, token=token).to(device)
+            self._model = ParlerTTSForConditionalGeneration.from_pretrained(
+                self.model, token=token, low_cpu_mem_usage=False).to(device).eval()
             self._tokenizer = AutoTokenizer.from_pretrained(self.model, token=token)
             self._desc_tokenizer = AutoTokenizer.from_pretrained(self._model.config.text_encoder._name_or_path,
                                                                  token=token)
@@ -122,7 +123,14 @@ class HindiTTSService:
 
             device = self._resolve_device()
             repo = self.model if "mms-tts" in self.model else MMS_HINDI_REPO
-            self._model = VitsModel.from_pretrained(repo, token=token).to(device)
+            # VITS uses weight_norm parametrizations; with newer transformers the default
+            # low_cpu_mem_usage/meta-device load + .to(device) raises
+            # "Cannot copy out of meta tensor". Materialise weights fully on CPU first.
+            try:
+                self._model = VitsModel.from_pretrained(repo, token=token, low_cpu_mem_usage=False).to(device)
+            except NotImplementedError:
+                self._model = VitsModel.from_pretrained(repo, token=token, device_map={"": device})
+            self._model.eval()
             self._tokenizer = AutoTokenizer.from_pretrained(repo, token=token)
             self._device = device
         elif self.backend == "silent":
