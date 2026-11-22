@@ -27,8 +27,11 @@ class WanAdapter(VideoGenerationEngine):
         from diffusers import WanPipeline
 
         dtype = torch.float16 if self.precision_plan.get("compute_dtype") == "float16" else torch.float32
-        self._pipeline = WanPipeline.from_pretrained(
-            self.model_repo, torch_dtype=dtype, variant="fp16" if dtype == torch.float16 else None,
+        from app.engines.base import load_diffusers_pipeline
+
+        self._pipeline = load_diffusers_pipeline(
+            WanPipeline, self.model_repo, dtype,
+            prefer_variant="fp16" if dtype == torch.float16 else None,
         )
         from app.offload import ModelOffloadManager
 

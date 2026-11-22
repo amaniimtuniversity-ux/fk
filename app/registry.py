@@ -50,16 +50,18 @@ MODELS: dict[str, ModelSpec] = {
     "wan2.1-1.3b": ModelSpec(
         id="wan2.1-1.3b", name="Wan2.1 T2V 1.3B",
         hf_repo="Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
-        params_b=1.3, download_gb=5.5, vram_fp16_gb=10.0, ram_gb=16.0,
-        t2v=True, i2v=False, native_precision="fp16",
+        params_b=1.3, download_gb=29.0, vram_fp16_gb=10.0, ram_gb=20.0,
+        t2v=True, i2v=False, native_precision="bf16",
         min_capability=(6, 0), license="Apache-2.0",
         status="production",
-        notes="Official 8.19GB VRAM (480p, T5 on CPU). FP16 native. Best T4/P100 quality-per-GB. T2V only.",
+        notes="Diffusers repo is 28.9GB on disk (UMT5-XXL text encoder stored fp32 = 22.7GB, transformer 5.7GB, "
+              "VAE 0.5GB); loaded as FP16 (~15GB RAM) with sequential CPU offload. Official 8.19GB VRAM at 480p. "
+              "Cache MUST live outside the 20GB /kaggle/working quota (use /kaggle/tmp). T2V only.",
     ),
     "cogvideox-2b": ModelSpec(
         id="cogvideox-2b", name="CogVideoX 2B",
         hf_repo="THUDM/CogVideoX-2b",
-        params_b=2.0, download_gb=9.0, vram_fp16_gb=12.0, ram_gb=18.0,
+        params_b=2.0, download_gb=11.0, vram_fp16_gb=12.0, ram_gb=18.0,
         t2v=True, i2v=False, native_precision="fp16",
         min_capability=(6, 0), license="Apache-2.0",
         status="production",
@@ -77,7 +79,7 @@ MODELS: dict[str, ModelSpec] = {
     "svd-xt": ModelSpec(
         id="svd-xt", name="Stable Video Diffusion XT",
         hf_repo="stabilityai/stable-video-diffusion-xt",
-        params_b=1.5, download_gb=6.0, vram_fp16_gb=8.0, ram_gb=14.0,
+        params_b=1.5, download_gb=4.5, vram_fp16_gb=8.0, ram_gb=14.0,
         t2v=False, i2v=True, native_precision="fp16",
         min_capability=(6, 0), license="Stability Community",
         status="production",

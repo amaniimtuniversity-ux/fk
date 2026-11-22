@@ -1,9 +1,11 @@
 """KaggleStorageManager: persistence via /kaggle/working + HF cache.
 
-Kaggle facts: /kaggle/working (~20GB) persists across sessions when the
-notebook is saved; /tmp does NOT. HF cache defaults to ~/.cache (ephemeral).
+Kaggle facts: /kaggle/working has a HARD 20GB quota (exceeding it fails I/O / kills the kernel)
+and persists across sessions; /kaggle/tmp has ~60GB but is wiped per session. Video models are
+large (Wan2.1-Diffusers = 29GB), so the HF cache lives in /kaggle/tmp and is re-downloaded per
+session; outputs/manifests/checkpoints stay in /kaggle/working.
 This manager:
-- Points HF_HOME / HF_HUB_CACHE at /kaggle/working/.hf_cache when present
+- Points HF_HOME / HF_HUB_CACHE at /kaggle/tmp/.hf_cache on Kaggle
 - Records model download manifests (repo, revision, file hashes, status)
 - Verifies cached models before reuse (never trusts partial downloads)
 - Exports final outputs to /kaggle/working/outputs/
@@ -22,7 +24,9 @@ class KaggleStorageManager:
     def __init__(self, working_dir: Optional[Path] = None):
         self.working_dir = Path(working_dir) if working_dir else Path("/kaggle/working")
         self.is_kaggle = self.working_dir.exists()
-        self.cache_dir = self.working_dir / ".hf_cache" if self.is_kaggle else Path(os.environ.get("HF_HOME", ".hf_cache"))
+        # Model cache goes to /kaggle/tmp (~60GB, ephemeral) — NOT /kaggle/working (20GB hard quota).
+        self.cache_dir = (Path(os.environ.get("HF_HOME", "/kaggle/tmp/.hf_cache")) if self.is_kaggle
+                          else Path(os.environ.get("HF_HOME", ".hf_cache")))
         self.outputs_dir = self.working_dir / "outputs" if self.is_kaggle else Path("outputs")
         self.manifest_dir = self.working_dir / "model_manifests" if self.is_kaggle else Path("model_manifests")
 

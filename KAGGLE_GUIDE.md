@@ -19,7 +19,7 @@
 | 1 | Install ffmpeg + CUDA 12.4 torch + diffusers stack | ~5–10 min |
 | 2 | Fetch this project (GitHub or Dataset), clone FreeVideo, apply T4/P100 patches | ~1 min |
 | 3 | Hardware + kernel probes (no download yet) | ~1 min |
-| 4 | Point HF cache at `/kaggle/working/.hf_cache` (persistent) | instant |
+| 4 | HF cache → `/kaggle/tmp` (60 GB, outside the 20 GB working quota) + pre-download Wan2.1 (28.9 GB) and Indic Parler-TTS (3.8 GB) | ~10–25 min |
 | 5 | Launch web UI + public Cloudflare tunnel link | ~20 s |
 | 6 | (Optional) generate directly from notebook, no browser | per script |
 
@@ -55,11 +55,17 @@ Then use `/api/send-telegram` / `/api/upload-youtube`. Secrets are env-only, nev
 
 ## Model cache as a Kaggle Dataset (optional, avoids re-download)
 
-1. After first download, save `/kaggle/working/.hf_cache` as a private Dataset.
+1. After first download, save `/kaggle/tmp/.hf_cache/hub/models--Wan-AI--Wan2.1-T2V-1.3B-Diffusers` as a private Dataset (29 GB; Kaggle datasets allow up to 200 GB).
 2. In later sessions, attach the Dataset and set `HF_HOME` to its path.
 3. `KaggleStorageManager.verify_cached()` confirms the snapshot before reuse.
 
 ## Troubleshooting
+
+- **`No space left on device` / kernel dies during model download:** the cache was on
+  `/kaggle/working` (20 GB quota). Cell 4 now uses `/kaggle/tmp`; re-run Cell 4. Wan2.1-Diffusers is
+  28.9 GB because its UMT5-XXL text encoder is stored in fp32 — it is cast to FP16 at load time.
+- **`variant=fp16 ... no such modeling files`:** fixed in `app/engines/base.py` (`load_diffusers_pipeline`
+  falls back to default weights + FP16 cast). Pull the latest repo.
 
 - **Web UI link does not open / `127.0.0.1:5000` refuses:** Kaggle has **no port preview**
   (unlike Colab). Only the `https://....trycloudflare.com` URL printed by Cell 5 works, and only

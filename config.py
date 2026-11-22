@@ -31,7 +31,9 @@ class Settings:
     # Storage
     data_dir: Path = field(default_factory=lambda: Path(_env("FV_DATA_DIR", str(ROOT / "data"))))
     kaggle_working: Path = field(default_factory=lambda: Path("/kaggle/working"))
-    hf_cache_dir: Path = field(default_factory=lambda: Path(_env("HF_HOME", "/kaggle/working/.hf_cache" if Path("/kaggle/working").exists() else str(ROOT / ".hf_cache"))))
+    # Kaggle: /kaggle/working has a hard 20GB quota (exceeding it kills the kernel) while /kaggle/tmp has
+    # ~60GB ephemeral space. Wan2.1-Diffusers alone is 29GB, so the HF cache must live in /kaggle/tmp.
+    hf_cache_dir: Path = field(default_factory=lambda: Path(_env("HF_HOME", "/kaggle/tmp/.hf_cache" if Path("/kaggle/working").exists() else str(ROOT / ".hf_cache"))))
     model_cache_dir: Path = field(default_factory=lambda: Path(_env("FV_MODEL_CACHE", str(ROOT / "models"))))
     freevideo_repo: Path = field(default_factory=lambda: Path(_env("FREEVVIDEO_REPO", str(ROOT.parent / "FreeVideo"))))
 

@@ -22,9 +22,10 @@ class SVDAdapter(VideoGenerationEngine):
         import torch
         from diffusers import StableVideoDiffusionPipeline
 
-        self._pipeline = StableVideoDiffusionPipeline.from_pretrained(
-            self.model_repo, torch_dtype=torch.float16, variant="fp16",
-        )
+        from app.engines.base import load_diffusers_pipeline
+
+        self._pipeline = load_diffusers_pipeline(StableVideoDiffusionPipeline, self.model_repo,
+                                                 torch.float16, prefer_variant="fp16")
         from app.offload import ModelOffloadManager
 
         ModelOffloadManager(mode=self.offload_mode).apply_to_pipeline(self._pipeline)

@@ -169,7 +169,12 @@ def detect_hardware() -> HardwareReport:
         kaggle_working_exists=Path("/kaggle/working").exists(),
     )
     report.ram_total_bytes, report.ram_available_bytes = _ram_bytes()
-    report.disk_total_bytes, report.disk_free_bytes = _disk_bytes("/kaggle/working" if report.kaggle_working_exists else "/")
+    # Measure the disk the MODEL CACHE lands on (HF_HOME), not the 20GB /kaggle/working quota.
+    _cache = os.environ.get("HF_HOME") or ("/kaggle/tmp" if report.kaggle_working_exists else "/")
+    _probe_path = _cache
+    while not os.path.exists(_probe_path) and os.path.dirname(_probe_path) != _probe_path:
+        _probe_path = os.path.dirname(_probe_path)
+    report.disk_total_bytes, report.disk_free_bytes = _disk_bytes(_probe_path)
     try:
         import socket
 
