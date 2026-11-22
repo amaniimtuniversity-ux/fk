@@ -10,7 +10,7 @@ import os
 import platform
 import shutil
 import subprocess
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,7 +84,22 @@ class HardwareReport:
         return f"sm{cap[0]}{cap[1]}"
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
+        # Build by hand instead of dataclasses.asdict(): asdict deep-copies every
+        # value, and torch device objects (e.g. _CUuuid) are not picklable.
+        d: dict[str, Any] = {
+            k: v for k, v in self.__dict__.items() if k != "gpus"
+        }
+        d["gpus"] = [
+            {
+                "index": int(g.index),
+                "name": str(g.name),
+                "capability": [int(g.capability[0]), int(g.capability[1])],
+                "vram_total_bytes": int(g.vram_total_bytes),
+                "vram_free_bytes": int(g.vram_free_bytes),
+                "uuid": str(g.uuid),
+            }
+            for g in self.gpus
+        ]
         d["architecture"] = self.architecture
         d["gpu_name"] = self.gpu_name
         d["capability"] = list(self.capability)
@@ -179,7 +194,7 @@ def detect_hardware() -> HardwareReport:
                     capability=(int(props.major), int(props.minor)),
                     vram_total_bytes=int(total),
                     vram_free_bytes=int(free),
-                    uuid=getattr(props, "uuid", "") or "",
+                    uuid=str(getattr(props, "uuid", "") or ""),  # torch>=2.5: _CUuuid object, not str
                 ))
     except Exception:
         pass

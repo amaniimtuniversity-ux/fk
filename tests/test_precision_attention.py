@@ -80,3 +80,28 @@ def test_chunked_sdpa_matches_full():
 def test_precision_manager_init():
     mgr = PrecisionManager((7, 5))
     assert mgr.capability == (7, 5)
+
+
+class _UnpicklableUuid:
+    """Mimics torch._C._CUuuid (torch>=2.5): not picklable, only str()-able."""
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError("cannot pickle '_CUuuid' object")
+
+    def __str__(self):
+        return "GPU-deadbeef"
+
+
+def test_hardware_report_to_dict_survives_unpicklable_torch_objects():
+    import json
+    from app.hardware import GPUInfo, HardwareReport
+
+    report = HardwareReport(
+        gpus=[GPUInfo(0, "Tesla T4", (7, 5), 15 * 2**30, 14 * 2**30, uuid=_UnpicklableUuid())],
+        cuda_available=True,
+    )
+    d = report.to_dict()
+    json.dumps(d)  # must be JSON-serialisable end to end
+    assert d["gpus"][0]["uuid"] == "GPU-deadbeef"
+    assert d["capability"] == [7, 5]
+    assert d["gpu_name"] == "Tesla T4"
