@@ -68,19 +68,26 @@ _CAMERA_CYCLE = [
 
 
 class ScenePlanner:
-    def __init__(self, target_seconds: float = 5.0, max_scenes: int = 24):
+    # Measured on real Hindi TTS output (MMS-TTS hin, sentence-stitched): ~1.8-1.9 words/second.
+    # Keeping scenes near the video model's native max clip (Wan2.1: 81 frames = 5 s) minimises
+    # slow-motion time-fitting later.
+    HINDI_WORDS_PER_SECOND = 1.85
+
+    def __init__(self, target_seconds: float = 5.0, max_scenes: int = 24,
+                 words_per_second: float | None = None):
         self.target_seconds = target_seconds
+        self.words_per_second = words_per_second or self.HINDI_WORDS_PER_SECOND
         self.max_scenes = max_scenes
 
     def plan(self, script: str, style: str = "horror") -> list[Scene]:
         sentences = split_sentences(script)
         if not sentences:
             raise ValueError("Script has no sentences to plan.")
-        # Group sentences into scenes by target duration (~15 words/sec Hindi narration).
+        # Group sentences into scenes by target duration using the measured Hindi speech rate.
         scenes: list[Scene] = []
         current: list[str] = []
         current_words = 0
-        target_words = max(20, int(self.target_seconds * 2.5))  # ~2.5 words/sec conservative
+        target_words = max(6, int(round(self.target_seconds * self.words_per_second)))
         for s in sentences:
             current.append(s)
             current_words += len(s.split())

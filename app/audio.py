@@ -71,6 +71,39 @@ def generate_ambience(output_path: Path, seconds: float, kind: str = "wind") -> 
     return ok, err
 
 
+def pad_audio_to_duration(input_path: Path, seconds: float, output_path: Path) -> tuple[bool, str]:
+    """Exact-length WAV: pad with silence or trim to `seconds` (keeps speech untouched when shorter)."""
+    if not ffmpeg_available():
+        return False, "ffmpeg not found."
+    return _run(["ffmpeg", "-y", "-i", str(input_path), "-af", f"apad,atrim=0:{seconds:.3f}",
+                 "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", str(output_path)])
+
+
+def concat_audio(parts: list[Path], output_path: Path) -> tuple[bool, str]:
+    """Lossless concat of WAV parts in order."""
+    if not ffmpeg_available():
+        return False, "ffmpeg not found."
+    if not parts:
+        return False, "no audio parts"
+    lst = output_path.parent / (output_path.stem + "_list.txt")
+    lst.write_text("".join(f"file '{p.resolve()}'\n" for p in parts), encoding="utf-8")
+    return _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:a", "pcm_s16le", str(output_path)])
+
+
+def audio_duration(path: Path) -> float:
+    try:
+        import soundfile as sf
+
+        info = sf.info(str(path))
+        return float(info.frames) / float(info.samplerate)
+    except Exception:
+        r = subprocess.run(["ffmpeg", "-i", str(path)], capture_output=True, text=True)
+        import re
+
+        m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", r.stderr)
+        return (int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])) if m else 0.0
+
+
 def write_srt(scenes: list[dict], output_path: Path) -> Path:
     """Write SRT subtitles from scene narrations (timed by cumulative duration)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)

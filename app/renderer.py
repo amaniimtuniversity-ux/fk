@@ -63,8 +63,66 @@ class VideoRenderer:
         if has_srt:
             cmd += ["-map", "2:s:0", "-c:s", "mov_text", "-metadata:s:s:0", "language=hin"]
         cmd += ["-c:v", "libx264", "-crf", str(self.crf), "-preset", self.preset, "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", str(output_path)]
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)]
         return _run(cmd)
+
+    def duration(self, video: Path) -> float:
+        """Duration in seconds via ffprobe (falls back to ffmpeg -i parse)."""
+        d = self.probe(video).get("duration") if shutil.which("ffprobe") else None
+        if d:
+            return float(d)
+        r = subprocess.run(["ffmpeg", "-i", str(video)], capture_output=True, text=True)
+        import re
+
+        m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", r.stderr)
+        return (int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])) if m else 0.0
+
+    def fit_clip_to_duration(self, clip: Path, target_seconds: float, output_path: Path,
+                             max_slow_factor: float = 2.5) -> tuple[bool, str, dict]:
+        """Make a GENUINE generated clip last exactly `target_seconds` (the narration length).
+
+        Policy (quality rules: never a static image, never a fake zoom):
+        - clip longer than target  -> keep it whole (audio is padded instead, see pipeline).
+        - clip shorter             -> slow motion of the real frames (setpts), up to max_slow_factor;
+                                      if still short, ping-pong (forward+reverse, all real frames)
+                                      until long enough, then trim exactly.
+        Output is re-timed to self.fps (frames duplicated as needed). Returns (ok, err, info).
+        """
+        if not ffmpeg_available():
+            return False, "ffmpeg not found.", {}
+        src_dur = self.duration(clip)
+        info: dict = {"clip_seconds": round(src_dur, 3), "target_seconds": round(target_seconds, 3),
+                      "slow_factor": 1.0, "pingpong": False}
+        if src_dur <= 0:
+            return False, f"could not read duration of {clip}", info
+        if src_dur >= target_seconds - 0.02:
+            ok, err = _run(["ffmpeg", "-y", "-i", str(clip), "-c:v", "libx264", "-crf", str(self.crf),
+                            "-preset", self.preset, "-pix_fmt", "yuv420p", "-r", str(self.fps), "-an",
+                            str(output_path)])
+            info["out_seconds"] = round(self.duration(output_path), 3) if ok else 0
+            return ok, err, info
+        factor = target_seconds / src_dur
+        filters = []
+        if factor > max_slow_factor:
+            # extend with real frames first: forward + reverse, repeated
+            reps = int(factor / max_slow_factor) + 1
+            seg = "[0:v]split=2[f][r];[r]reverse[rv];[f][rv]concat=n=2:v=1:a=0[pp]"
+            if reps > 1:
+                seg += f";[pp]loop=loop={reps - 1}:size=32767:start=0[pp]"
+            filters.append(seg)
+            base_dur = src_dur * 2 * reps
+            factor = max(1.0, target_seconds / base_dur)
+            info["pingpong"] = True
+            vin = "[pp]"
+        else:
+            vin = "[0:v]"
+        filters.append(f"{vin}setpts={factor:.5f}*PTS,fps={self.fps},trim=duration={target_seconds:.3f}[v]")
+        info["slow_factor"] = round(factor, 3)
+        ok, err = _run(["ffmpeg", "-y", "-i", str(clip), "-filter_complex", ";".join(filters), "-map", "[v]",
+                        "-c:v", "libx264", "-crf", str(self.crf), "-preset", self.preset, "-pix_fmt", "yuv420p",
+                        "-an", str(output_path)])
+        info["out_seconds"] = round(self.duration(output_path), 3) if ok else 0
+        return ok, err, info
 
     def upscale_1080p(self, video: Path, output_path: Path) -> tuple[bool, str]:
         """Lanczos upscale to 1920x1080. Labeled as upscale in manifest."""

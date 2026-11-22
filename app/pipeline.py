@@ -22,7 +22,8 @@ from typing import Any, Callable, Optional
 from config import PROFILES, SETTINGS
 
 from .attention import AttentionBackendSelector
-from .audio import generate_ambience, loudness_normalize, mix_narration_ambience, write_srt
+from .audio import (audio_duration, concat_audio, generate_ambience, loudness_normalize,
+                    mix_narration_ambience, pad_audio_to_duration, write_srt)
 from .checkpoint import CheckpointManager
 from .hardware import HardwareDetector
 from .memory import MemoryManager
@@ -106,35 +107,59 @@ class Pipeline:
         ckpt.save_json("scene_plan.json", {"scenes": [s.to_dict() for s in scenes]})
         self._report("scenes", len(scenes), len(scenes), f"{len(scenes)} scenes planned")
 
-        # Narration (exact script)
+        # ---- Narration FIRST, per scene (verbatim slices) -> exact timeline -------------------
+        # The narration drives the timeline: each scene's video is generated/fitted to the length of
+        # its own spoken text, so the full script is always heard and A/V stay aligned.
+        narr_dir = pdir / "narration"
+        narr_dir.mkdir(parents=True, exist_ok=True)
         narration_path = pdir / "narration.wav"
-        if not narration_path.exists():
+        narr_manifest = ckpt.load_json("narration_manifest.json") or {}
+        scene_audio: list[dict[str, Any]] = narr_manifest.get("scenes", [])
+        complete = (len(scene_audio) == len(scenes)
+                    and all(Path(x["path"]).exists() for x in scene_audio)
+                    and narr_manifest.get("script_hash") == project.script_hash)
+        if not complete:
+            if tts_backend == "silent":
+                self.memory.warn("Narration is SILENT (explicitly requested test mode).")
             tts = HindiTTSService(backend=tts_backend, model=SETTINGS.tts_model,
                                   voice_description=SETTINGS.tts_voice_description)
-            tts_obj = tts.synthesize_script(project.script_original, narration_path)
+            scene_audio = []
+            used_backend = None
+            for i, sc in enumerate(scenes):
+                wav = narr_dir / f"narr_{i:03d}.wav"
+                self._report("narration", i, len(scenes), f"scene {i + 1}/{len(scenes)} TTS")
+                r = tts.synthesize_script(sc.narration, wav)
+                if not r.success:
+                    tts.unload()
+                    ckpt.set_status("failed", {"error": f"TTS failed on scene {i}: {r.error}"})
+                    raise RuntimeError(f"Narration (TTS) failed on scene {i + 1}: {r.error}")
+                if r.is_silent_fallback and tts_backend != "silent":
+                    tts.unload()
+                    ckpt.set_status("failed", {"error": "silent narration without explicit request"})
+                    raise RuntimeError("Narration would be SILENT but a real TTS backend was requested. "
+                                       f"Refusing to produce a fake video. Details: {r.error}")
+                if used_backend is None and r.backend != tts_backend:
+                    self.memory.warn(f"TTS fallback: requested {tts_backend}, used {r.backend}. {r.error}")
+                used_backend = r.backend
+                scene_audio.append({"index": i, "path": str(wav), "seconds": round(audio_duration(wav), 3),
+                                    "backend": r.backend, "sample_rate": r.sample_rate,
+                                    "is_silent_fallback": r.is_silent_fallback})
             tts.unload()
-            if not tts_obj.success:
-                ckpt.set_status("failed", {"error": f"TTS failed: {tts_obj.error}"})
-                raise RuntimeError(f"Narration (TTS) failed: {tts_obj.error}")
-            if tts_obj.is_silent_fallback and tts_backend != "silent":
-                ckpt.set_status("failed", {"error": "silent narration without explicit request"})
-                raise RuntimeError("Narration would be SILENT but a real TTS backend was requested. "
-                                   f"Refusing to produce a fake video. Details: {tts_obj.error}")
-            tts_result = tts_obj.to_dict()  # normalise: fresh run (dataclass) == resume (json dict)
-            ckpt.save_json("narration_manifest.json", tts_result)
-            if tts_obj.backend != tts_backend:
-                self.memory.warn(f"TTS fallback: requested {tts_backend}, used {tts_obj.backend}. {tts_obj.error}")
-            if tts_obj.is_silent_fallback:
-                self.memory.warn("Narration is SILENT (explicitly requested test mode).")
-        else:
-            tts_result = ckpt.load_json("narration_manifest.json") or {}
-        if not narration_path.exists():
-            raise RuntimeError(f"Narration file missing after TTS: {narration_path}")
-        self._report("narration", 1, 1,
-                     f"narration done ({tts_result.get('backend', '?')}, "
-                     f"{tts_result.get('duration_seconds', 0)}s)")
+            narr_manifest = {"script_hash": project.script_hash, "backend": used_backend,
+                             "scenes": scene_audio,
+                             "duration_seconds": round(sum(x["seconds"] for x in scene_audio), 3),
+                             "is_silent_fallback": any(x["is_silent_fallback"] for x in scene_audio)}
+            ckpt.save_json("narration_manifest.json", narr_manifest)
+        # per-scene target length = speech + a short breath
+        pause = float(getattr(SETTINGS, "scene_pause_seconds", 0.4))
+        targets = [max(1.0, x["seconds"] + pause) for x in scene_audio]
+        for sc, t in zip(scenes, targets):
+            sc.duration_seconds = round(t, 3)
+        self._report("narration", len(scenes), len(scenes),
+                     f"narration done ({narr_manifest.get('backend')}, "
+                     f"{narr_manifest.get('duration_seconds')}s, {len(scenes)} scenes)")
 
-        # Engine + registry
+        # ---- Engine + registry ------------------------------------------------------------------
         from .kaggle_storage import cached_bytes, choose_cache_dir
 
         model_id = {"wan2.1": "wan2.1-1.3b", "cogvideox": "cogvideox-2b",
@@ -146,7 +171,8 @@ class Pipeline:
         self._report("storage", 1, 1, f"HF cache {cache_dir} (free {cache_free/1e9:.1f} GB, "
                                       f"need {need/1e9:.1f} GB more for {pre_spec.hf_repo})")
         for n in cache_notes:
-            self.memory.warnings.append(f"storage: {n}") if "relocating" in n else None
+            if "relocating" in n:
+                self.memory.warnings.append(f"storage: {n}")
         checker = ModelCompatibilityChecker(report.capability, report.vram_total_bytes,
                                             report.ram_total_bytes, cache_free, disk_path=str(cache_dir))
         registry = VideoModelRegistry(checker)
@@ -156,12 +182,17 @@ class Pipeline:
             raise RuntimeError(f"Model {spec.id} incompatible: {compat['reasons']}")
         engine = get_engine(engine_id, spec.hf_repo, precision.to_dict(), attention.to_dict(), prof["offload"])
 
-        # Per-scene generation (resumable)
+        # ---- Per-scene generation (resumable), frame count follows narration ----------------------
         from .engines.base import GenerationRequest
 
+        gen_fps = int(SETTINGS.default_fps)          # model-native (Wan: 16)
+        max_frames = int(prof["frames"])
         ckpt.cleanup_partial()
         scene_results: list[dict[str, Any]] = []
         for i, scene in enumerate(scenes):
+            want = int(round(targets[i] * gen_fps)) + 1
+            want = max(9, min(max_frames, want))
+            want = want - ((want - 1) % 4)            # Wan needs 4n+1
             if ckpt.is_scene_complete(i):
                 self._report("video", i + 1, len(scenes), f"scene {i + 1} cached (resume)")
                 scene_results.append(ckpt.load_json(f"scenes/scene_{i:03d}.json") or {"success": True})
@@ -170,35 +201,73 @@ class Pipeline:
             self.memory.snapshot(f"before_scene_{i}")
             req = GenerationRequest(
                 prompt=scene.visual_prompt, output_path=ckpt.scene_path(i),
-                width=prof["width"], height=prof["height"], num_frames=prof["frames"],
-                fps=SETTINGS.default_fps, num_inference_steps=prof["steps"],
+                width=prof["width"], height=prof["height"], num_frames=want,
+                fps=gen_fps, num_inference_steps=prof["steps"],
                 guidance_scale=SETTINGS.default_guidance, seed=seed + i,
                 image_path=first_frame,
                 progress_callback=lambda s, t, m, i=i: self._report("video", i, len(scenes), m),
             )
             result = engine.generate(req)
-            ckpt.save_scene(i, result.to_dict())
-            scene_results.append(result.to_dict())
+            rd = result.to_dict()
+            rd["requested_frames"] = want
+            rd["target_seconds"] = round(targets[i], 3)
+            ckpt.save_scene(i, rd)
+            scene_results.append(rd)
             self._report("video", i + 1, len(scenes),
-                         f"scene {i + 1}/{len(scenes)} {'ok' if result.success else 'FAILED: ' + result.error[:200]}")
+                         f"scene {i + 1}/{len(scenes)} {'ok' if result.success else 'FAILED: ' + result.error[:200]}"
+                         + (f" ({result.frames}f, {result.seconds:.0f}s, "
+                            f"{result.peak_vram_bytes/1e9:.1f}GB VRAM)" if result.success else ""))
             if not result.success:
                 ckpt.set_status("failed", {"failed_scene": i, "error": result.error})
                 raise RuntimeError(f"Scene {i} failed: {result.error}")
+        try:
+            engine.unload()
+        except Exception:
+            pass
+        self.memory.cleanup()
 
-        # Render
-        self._report("render", 1, 3, "concat")
-        renderer = VideoRenderer(fps=SETTINGS.default_fps)
-        clips = [ckpt.scene_path(i) for i in range(len(scenes))]
+        # ---- Time-fit each clip to its narration, build exact per-scene audio -------------------
+        self._report("render", 1, 4, "time-fit clips to narration")
+        renderer = VideoRenderer(fps=int(getattr(SETTINGS, "output_fps", 24)))
+        fit_dir = pdir / "fit"
+        fit_dir.mkdir(exist_ok=True)
+        fitted: list[Path] = []
+        audio_parts: list[Path] = []
+        timeline: list[dict[str, Any]] = []
+        for i, scene in enumerate(scenes):
+            fit_mp4 = fit_dir / f"fit_{i:03d}.mp4"
+            ok, err, info = renderer.fit_clip_to_duration(ckpt.scene_path(i), targets[i], fit_mp4)
+            if not ok:
+                ckpt.set_status("failed", {"error": f"time-fit scene {i} failed: {err}"})
+                raise RuntimeError(f"Time-fit failed on scene {i + 1}: {err[-400:]}")
+            seg_len = max(info.get("out_seconds") or targets[i], 0.1)
+            wav_fit = fit_dir / f"audio_{i:03d}.wav"
+            ok, err = pad_audio_to_duration(Path(scene_audio[i]["path"]), seg_len, wav_fit)
+            if not ok:
+                raise RuntimeError(f"Audio pad failed on scene {i + 1}: {err[-300:]}")
+            fitted.append(fit_mp4)
+            audio_parts.append(wav_fit)
+            scene.duration_seconds = round(seg_len, 3)
+            timeline.append({"index": i, "narration_seconds": scene_audio[i]["seconds"], **info,
+                             "segment_seconds": round(seg_len, 3)})
+            if info.get("slow_factor", 1.0) > 1.0:
+                self._report("render", 1, 4, f"scene {i + 1}: slow-motion x{info['slow_factor']}"
+                                              + (" + ping-pong" if info.get("pingpong") else ""))
+
+        self._report("render", 2, 4, "concat video + narration timeline")
         concat_path = pdir / "concat.mp4"
-        ok, err = renderer.concat_clips(clips, concat_path)
+        ok, err = renderer.concat_clips(fitted, concat_path)
         if not ok:
             ckpt.set_status("failed", {"error": f"concat failed: {err}"})
             raise RuntimeError(f"Concat failed: {err}")
-        # Ambience + mix + loudnorm
-        self._report("render", 2, 3, "audio: ambience + mix + loudnorm")
+        ok, err = concat_audio(audio_parts, narration_path)
+        if not ok:
+            raise RuntimeError(f"Narration concat failed: {err}")
+        total_seconds = sum(t["segment_seconds"] for t in timeline)
+
+        self._report("render", 3, 4, "audio: ambience + mix + loudnorm")
         ambience_path = pdir / "ambience.m4a"
-        ok, err = generate_ambience(ambience_path,
-                                    seconds=max(5.0, len(scenes) * SETTINGS.scene_target_seconds),
+        ok, err = generate_ambience(ambience_path, seconds=total_seconds + 1.0,
                                     kind="wind" if style == "horror" else "drone")
         if not ok:
             ckpt.set_status("failed", {"error": f"ambience failed: {err}"})
@@ -213,13 +282,18 @@ class Pipeline:
         if not ok:
             ckpt.set_status("failed", {"error": f"loudnorm failed: {err}"})
             raise RuntimeError(f"Loudness normalization failed: {err}")
-        self._report("render", 3, 3, "mux video + audio + subtitles")
+        self._report("render", 4, 4, "mux video + audio + subtitles")
         srt_path = write_srt([s.to_dict() for s in scenes], pdir / "subtitles.srt")
         final_path = pdir / "final.mp4"
         ok, err = renderer.mux_audio_subtitles(concat_path, final_audio, srt_path, final_path)
         if not ok:
             ckpt.set_status("failed", {"error": f"mux failed: {err}"})
             raise RuntimeError(f"Mux failed: {err}")
+        final_dur = renderer.duration(final_path)
+        if abs(final_dur - total_seconds) > 0.5 + 0.02 * total_seconds:
+            ckpt.set_status("failed", {"error": f"duration mismatch {final_dur} vs {total_seconds}"})
+            raise RuntimeError(f"Final duration {final_dur:.2f}s != timeline {total_seconds:.2f}s — "
+                               "narration would be cut. Aborting instead of shipping a truncated video.")
 
         # Quality + manifest
         from .quality import evaluate_clip
@@ -232,6 +306,9 @@ class Pipeline:
             "attention": attention.to_dict(),
             "scenes": [s.to_dict() for s in scenes],
             "scene_results": scene_results, "quality": quality,
+            "narration": {k: v for k, v in narr_manifest.items() if k != "scenes"},
+            "timeline": timeline, "duration_seconds": round(final_dur, 3),
+            "generation_fps": gen_fps, "output_fps": renderer.fps,
             "memory_warnings": self.memory.warnings,
             "seconds": round(time.time() - started, 1),
             "final": str(final_path), "native_resolution": f"{prof['width']}x{prof['height']}",

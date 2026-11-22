@@ -1,12 +1,14 @@
 # Kaggle GPU stack. Do NOT pin torch here: use the CUDA torch preinstalled in the Kaggle image
-# (verified working on T4 in-session). Install order matters; see notebooks/kaggle_freevideo_t4.ipynb Cell 1.
+# (verified working on T4 in-session). Install order matters: use scripts/setup_env.py (notebook Cell 2),
+# which installs these in steps, re-pins protobuf LAST and verifies every import.
 transformers==4.46.1        # exact pin required by parler-tts 0.2.3 (best Hindi TTS)
 diffusers==0.33.1           # first release with WanPipeline; compatible with transformers 4.46.1
 accelerate>=1.1
 safetensors
 sentencepiece
-protobuf
-huggingface_hub>=0.26
+protobuf>=5.29,<7          # MUST be installed last; Kaggle *_pb2 modules need runtime_version
+huggingface_hub>=0.26,<1.0  # 1.x removed APIs used by transformers 4.46
+scipy
 soundfile
 imageio[ffmpeg]
 av

@@ -32,9 +32,12 @@ def index() -> Response:
 
 @app.route("/api/health")
 def health():
+    from app.envcheck import runtime_problems
+
+    _problems = runtime_problems()
     from app.hardware import HardwareDetector
 
-    return jsonify({"ok": True, "hardware": HardwareDetector().detect().to_dict()})
+    return jsonify({"runtime_problems": _problems, "runtime_ok": not _problems, "ok": True, "hardware": HardwareDetector().detect().to_dict()})
 
 
 @app.route("/api/profiles")
@@ -74,6 +77,11 @@ def preview_voice():
 def generate():
     data = request.get_json(force=True)
     script = data.get("script", "")
+    from app.envcheck import runtime_problems
+
+    _pb = runtime_problems()
+    if _pb:
+        return jsonify({"success": False, "error": "Runtime not ready: " + " | ".join(_pb)}), 503
     if not script.strip():
         return jsonify({"success": False, "error": "Script is empty."}), 400
     job_id = f"job_{int(time.time() * 1000)}"
@@ -211,6 +219,10 @@ function downloadFinal(){window.location='/api/download/'+projectId;}
 
 
 def run(host: str = "0.0.0.0", port: int = 5000) -> None:
+    from app.envcheck import runtime_problems
+
+    for p in runtime_problems():
+        print("RUNTIME PROBLEM:", p, flush=True)
     app.run(host=host, port=port, threaded=True)
 
 

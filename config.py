@@ -43,7 +43,8 @@ class Settings:
     default_width: int = field(default_factory=lambda: _env_int("FV_WIDTH", 832))
     default_height: int = field(default_factory=lambda: _env_int("FV_HEIGHT", 480))
     default_frames: int = field(default_factory=lambda: _env_int("FV_FRAMES", 49))
-    default_fps: int = field(default_factory=lambda: _env_int("FV_FPS", 24))
+    default_fps: int = field(default_factory=lambda: _env_int("FV_FPS", 16))  # Wan2.1 native 16 fps; final render fps below
+    output_fps: int = field(default_factory=lambda: _env_int("FV_OUT_FPS", 24))
     default_steps: int = field(default_factory=lambda: _env_int("FV_STEPS", 30))
     default_guidance: float = field(default_factory=lambda: float(_env("FV_GUIDANCE", "6.0")))
     default_seed: int = field(default_factory=lambda: _env_int("FV_SEED", 42))
@@ -72,6 +73,7 @@ class Settings:
     # Behavior
     allow_paid_apis: bool = field(default_factory=lambda: _env_bool("FV_ALLOW_PAID_APIS", False))
     max_scenes: int = field(default_factory=lambda: _env_int("FV_MAX_SCENES", 24))
+    scene_pause_seconds: float = field(default_factory=lambda: float(_env("FV_SCENE_PAUSE", "0.4")))
     scene_target_seconds: float = field(default_factory=lambda: float(_env("FV_SCENE_SECONDS", "5.0")))
 
     def ensure_dirs(self) -> None:
@@ -84,7 +86,7 @@ SETTINGS = Settings()
 # Generation profiles: (width, height, frames, steps, offload, vae_tiling)
 PROFILES = {
     "max_quality": {"width": 832, "height": 480, "frames": 81, "steps": 40, "offload": "sequential", "vae_tiling": True, "note": "Best settings that fit T4 16GB with sequential offload. Slower."},
-    "balanced": {"width": 832, "height": 480, "frames": 49, "steps": 30, "offload": "sequential", "vae_tiling": True, "note": "Default. ~5s clips at 24fps."},
+    "balanced": {"width": 832, "height": 480, "frames": 81, "steps": 30, "offload": "sequential", "vae_tiling": True, "note": "Default. Up to 81 frames = 5s at Wan's native 16fps; frame count follows each scene's narration length."},
     "low_vram": {"width": 640, "height": 360, "frames": 33, "steps": 25, "offload": "sequential", "vae_tiling": True, "note": "Smaller canvas for P100 / tight VRAM. User is warned; quality reduced by resolution only."},
     "cpu_assisted": {"width": 640, "height": 360, "frames": 25, "steps": 20, "offload": "sequential", "vae_tiling": True, "note": "Most conservative. Slowest, most reliable on P100."},
 }

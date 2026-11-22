@@ -92,6 +92,15 @@ def test_pipeline_end_to_end_and_resume(tmp_path, monkeypatch):
     assert "Video:" in probe and "Audio:" in probe
     # subtitles were written
     assert (final.parent / "subtitles.srt").read_text(encoding="utf-8").strip()
+    # narration-driven timeline: final length == sum of per-scene segments ~= narration + pauses,
+    # and every clip was time-fitted (never cut) to its own narration
+    assert len(manifest["timeline"]) == n_scenes
+    total = sum(t["segment_seconds"] for t in manifest["timeline"])
+    assert abs(manifest["duration_seconds"] - total) < 0.5 + 0.02 * total
+    assert manifest["duration_seconds"] >= manifest["narration"]["duration_seconds"] - 0.1
+    for t in manifest["timeline"]:
+        assert t["segment_seconds"] >= t["narration_seconds"] - 0.05
+    assert manifest["generation_fps"] == 16 and manifest["output_fps"] == 24
 
     # --- resume: nothing regenerated, same script hash enforced ---
     FakeEngine.calls = 0

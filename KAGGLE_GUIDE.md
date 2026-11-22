@@ -6,9 +6,9 @@
    **Internet = ON**, **Save version = Save**.
 2. Get this project onto Kaggle — **pick one**:
    - **(A) GitHub (recommended):** push `freevideo-kaggle` to your own GitHub repo, then in
-     Cell 2 set `PROJECT_REPO = 'https://github.com/<you>/freevideo-kaggle.git'`.
+     Cell 1 set `PROJECT_REPO` to your fork (default: `https://github.com/amaniimtuniversity-ux/fk.git`).
    - **(B) Kaggle Dataset:** Notebook → *Add Input* → *Upload* → *New Dataset*; upload the
-     `freevideo-kaggle` folder or a zip of it. Cell 2 auto-detects it under `/kaggle/input/`.
+     `freevideo-kaggle` folder or a zip of it. Cell 1 auto-detects it under `/kaggle/input/`.
      Leave `PROJECT_REPO` unchanged.
 3. Open `notebooks/kaggle_freevideo_t4.ipynb` and run Cells 1–5 in order.
 
@@ -88,12 +88,24 @@ cannot produce speech **fails the job** — no silent video is ever produced.
 Enable Indic Parler: https://huggingface.co/ai4bharat/indic-parler-tts → *Agree and access* →
 https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Add-ons → Secrets* → `HF_TOKEN` → re-run Cell 4.
 
+## How the video length is decided (narration-driven timeline)
+
+1. The script is split into sentences (verbatim) and grouped into scenes of ~5 s of Hindi speech
+   (measured rate ≈ 1.85 words/s).
+2. **Narration is synthesized first, per scene.** Each scene's clip length = its spoken length + 0.4 s.
+3. The video model generates `4n+1` frames at its native 16 fps for that length (max 81 frames per clip).
+4. Each real clip is time-fitted to its narration (gentle slow-motion ≤2.5×, then forward+reverse of the
+   same real frames if still short) — never a still image, never a cut-off voice. The final file is
+   checked: its duration must equal the narration timeline or the job fails loudly.
+5. `final_manifest.json` → `timeline` shows per scene: speech seconds, clip seconds, slow factor, segment.
+
 ## Troubleshooting
 
 - **`cannot import name 'runtime_version' from 'google.protobuf'`** (transformers import fails, both TTS
   backends fail): a dependency downgraded protobuf. Run `!pip install -U "protobuf>=5.29,<7"`, then
   **Run → Restart kernel**, then Cells 2–5 again (downloaded models in `/kaggle/tmp` survive a kernel
-  restart). Cell 1 now does this automatically and prints `OK    protobuf 5.x`.
+  restart). Cell 2 (`scripts/setup_env.py`) does this automatically and prints `READY protobuf 5.x/6.x`.
+  The web UI also refuses to start a job (HTTP 503 with the fix) while the runtime is broken.
 
 - **`GatedRepoError: 401 ... indic-parler-tts`:** expected without a token. Add `HF_TOKEN` (above) or
   continue — MMS Hindi is used and recorded in the manifest.
@@ -111,9 +123,9 @@ https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Ad
   (unlike Colab). Only the `https://....trycloudflare.com` URL printed by Cell 5 works, and only
   while the session is alive. If it still fails, re-run Cell 5 (gets a fresh URL) or use Cell 6.
 
-- **`FileNotFoundError: /kaggle/working/freevideo-kaggle`** or **`PROJECT NOT FOUND`** in Cell 2:
+- **`FileNotFoundError: /kaggle/working/freevideo-kaggle`** or **`PROJECT NOT FOUND`** in Cell 1:
   the project itself was never fetched. Set `PROJECT_REPO` to your GitHub URL *or* attach the
-  project as a Dataset input (see Setup step 2), then re-run Cell 2.
+  project as a Dataset input (see Setup step 2), then re-run Cell 1.
 
 | Symptom | Fix |
 |---|---|
@@ -121,4 +133,4 @@ https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Ad
 | OOM during generation | Switch profile to Low VRAM / CPU-Assisted. Check `benchmark_results.json`. |
 | TTS gated repo error | Accept terms at huggingface.co/ai4bharat/indic-parler-tts once. |
 | Silent narration | TTS backend failed — check `narration_manifest.json` error. Do not ship silent videos. |
-| ffmpeg missing | Re-run Cell 1 (`apt-get install ffmpeg`). |
+| ffmpeg missing | Re-run Cell 2 (`apt-get install ffmpeg`). |
