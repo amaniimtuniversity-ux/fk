@@ -116,10 +116,16 @@ class Pipeline:
             if not tts_obj.success:
                 ckpt.set_status("failed", {"error": f"TTS failed: {tts_obj.error}"})
                 raise RuntimeError(f"Narration (TTS) failed: {tts_obj.error}")
+            if tts_obj.is_silent_fallback and tts_backend != "silent":
+                ckpt.set_status("failed", {"error": "silent narration without explicit request"})
+                raise RuntimeError("Narration would be SILENT but a real TTS backend was requested. "
+                                   f"Refusing to produce a fake video. Details: {tts_obj.error}")
             tts_result = tts_obj.to_dict()  # normalise: fresh run (dataclass) == resume (json dict)
             ckpt.save_json("narration_manifest.json", tts_result)
+            if tts_obj.backend != tts_backend:
+                self.memory.warn(f"TTS fallback: requested {tts_backend}, used {tts_obj.backend}. {tts_obj.error}")
             if tts_obj.is_silent_fallback:
-                self.memory.warn(f"Narration used SILENT fallback: {tts_obj.error}")
+                self.memory.warn("Narration is SILENT (explicitly requested test mode).")
         else:
             tts_result = ckpt.load_json("narration_manifest.json") or {}
         if not narration_path.exists():

@@ -180,7 +180,7 @@ button{padding:.5rem 1rem;cursor:pointer} video{max-width:100%} .ok{color:green}
 <label>Profile <select id="profile"><option value="balanced">Balanced</option><option value="max_quality">Max Quality</option>
 <option value="low_vram">Low VRAM</option><option value="cpu_assisted">CPU-Assisted</option></select></label>
 <label>Style <select id="style"><option value="horror">Horror</option><option value="cinematic">Cinematic</option></select></label>
-<label>TTS <select id="tts"><option value="indic-parler">Indic Parler-TTS</option><option value="silent">Silent (test only)</option></select></label>
+<label>TTS <select id="tts"><option value="indic-parler">Indic Parler-TTS (best; gated — needs HF_TOKEN)</option><option value="mms-hin">MMS Hindi (open, no token)</option><option value="silent">Silent (test only)</option></select></label>
 </div></div>
 <div class="card"><h2>3. Voice preview</h2>
 <button onclick="previewVoice()">Preview narration</button> <audio id="previewAudio" controls></audio>

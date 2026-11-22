@@ -59,7 +59,42 @@ Then use `/api/send-telegram` / `/api/upload-youtube`. Secrets are env-only, nev
 2. In later sessions, attach the Dataset and set `HF_HOME` to its path.
 3. `KaggleStorageManager.verify_cached()` confirms the snapshot before reuse.
 
+## Hindi TTS backends (what you actually hear)
+
+| Backend | Quality | Access | Used when |
+|---|---|---|---|
+| `indic-parler` (ai4bharat/indic-parler-tts) | best, expressive | **gated**: click *Agree* on the HF page once + `HF_TOKEN` Kaggle secret | token present |
+| `mms-hin` (facebook/mms-tts-hin) | good, clear, less expressive | open | Parler unavailable, or chosen in UI |
+| `silent` | none | — | **only if you pick it** (test mode); never an automatic fallback |
+
+The manifest's `narration_manifest.json` records the backend that was really used. A requested
+real backend that cannot produce speech **fails the job** — no silent video is ever produced.
+
+To enable Indic Parler: https://huggingface.co/ai4bharat/indic-parler-tts → *Agree and access* →
+https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle notebook → *Add-ons → Secrets* →
+name `HF_TOKEN` → re-run Cell 4.
+
+## Hindi TTS backends (what you actually hear)
+
+| Backend | Quality | Access | Used when |
+|---|---|---|---|
+| `indic-parler` (ai4bharat/indic-parler-tts) | best, expressive | **gated**: click *Agree* on the HF page once + `HF_TOKEN` Kaggle secret | token present |
+| `mms-hin` (facebook/mms-tts-hin) | good, clear, less expressive | open | Parler unavailable, or chosen in UI |
+| `silent` | none | — | **only if you pick it** (test mode); never an automatic fallback |
+
+`narration_manifest.json` records the backend that was really used. A requested real backend that
+cannot produce speech **fails the job** — no silent video is ever produced.
+
+Enable Indic Parler: https://huggingface.co/ai4bharat/indic-parler-tts → *Agree and access* →
+https://huggingface.co/settings/tokens → *New token (Read)* → Kaggle → *Add-ons → Secrets* → `HF_TOKEN` → re-run Cell 4.
+
 ## Troubleshooting
+
+- **`GatedRepoError: 401 ... indic-parler-tts`:** expected without a token. Add `HF_TOKEN` (above) or
+  continue — MMS Hindi is used and recorded in the manifest.
+
+- **`GatedRepoError: 401 ... indic-parler-tts`:** expected without a token. Either add `HF_TOKEN`
+  (see above) or just continue — MMS Hindi is used and recorded in the manifest.
 
 - **`No space left on device` / kernel dies during model download:** the cache was on
   `/kaggle/working` (20 GB quota). Cell 4 now uses `/kaggle/tmp`; re-run Cell 4. Wan2.1-Diffusers is

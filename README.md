@@ -22,7 +22,7 @@ python scripts/benchmark.py --quick      # kernel probes
 - **Primary engine:** Wan2.1-T2V-1.3B (FP16, SDPA, sequential offload) — best quality that fits T4/P100.
 - **Secondary:** CogVideoX-2B (T2V), SVD-XT (I2V fallback).
 - **Optional experimental:** FreeVideo MiniMax H3 (patched, SM80+; cannot fit Kaggle RAM/disk — see AUDIT.md).
-- **TTS:** Indic Parler-TTS (primary), VITS fallback, silent test-only fallback (flagged).
+- **TTS:** Indic Parler-TTS (primary, gated → `HF_TOKEN`), MMS Hindi (open fallback, recorded in manifest), silent only on explicit request.
 - **Script:** verbatim + SHA-256; scene planner never rewrites; full-coverage verified.
 - **Recovery:** scene-level checkpoints; resume skips completed scenes; HF cache in `/kaggle/working`.
 

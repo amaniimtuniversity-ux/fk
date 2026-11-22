@@ -5,9 +5,11 @@ Backends (in preference order):
    naturalness/prosody. ~3.8GB FP32 weights; runs on T4 (separate from video
    VRAM since TTS runs first, then unloads) or CPU (slow). Gated HF repo:
    user must accept terms once on HF website.
-2. AI4Bharat VITS (Indic-TTS) — lightweight fallback if Parler unavailable.
-3. Silent WAV fallback — ONLY for tests/offline smoke runs. Clearly labeled;
-   never presented as real narration.
+2. Meta MMS-TTS Hindi (facebook/mms-tts-hin, VITS, CC-BY-NC 4.0, ~145MB, NOT gated) — real
+   Hindi speech, used automatically when Parler is unavailable (gated/no token). The manifest
+   records backend="mms-hin" so this is never hidden.
+3. Silent WAV — ONLY when the caller explicitly asks for backend="silent" (tests/offline smoke).
+   It is NEVER used as an automatic fallback: a real TTS failure fails the pipeline.
 
 Features: sentence-level synthesis, stitching with pauses, voice preview,
 per-paragraph regeneration, consistent narrator (fixed voice description).
@@ -42,6 +44,28 @@ class TTSResult:
         }
 
 
+MMS_HINDI_REPO = "facebook/mms-tts-hin"
+
+
+def hf_token() -> Optional[str]:
+    """HF token from env (HF_TOKEN / HUGGINGFACE_HUB_TOKEN) or Kaggle Secrets (HF_TOKEN). None if absent."""
+    import os
+
+    for k in ("HF_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+        if os.environ.get(k):
+            return os.environ[k]
+    try:  # Kaggle: Add-ons -> Secrets -> HF_TOKEN
+        from kaggle_secrets import UserSecretsClient  # type: ignore
+
+        tok = UserSecretsClient().get_secret("HF_TOKEN")
+        if tok:
+            os.environ["HF_TOKEN"] = tok
+            return tok
+    except Exception:
+        pass
+    return None
+
+
 def _write_silent_wav(path: Path, seconds: float, sample_rate: int = 24000) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     n = int(seconds * sample_rate)
@@ -54,8 +78,10 @@ def _write_silent_wav(path: Path, seconds: float, sample_rate: int = 24000) -> N
 
 class HindiTTSService:
     def __init__(self, backend: str = "indic-parler", model: str = "ai4bharat/indic-parler-tts",
-                 voice_description: str = "", sample_rate: int = 24000, device: str = "auto"):
+                 voice_description: str = "", sample_rate: int = 24000, device: str = "auto",
+                 allow_fallback: bool = True):
         self.backend = backend
+        self.allow_fallback = allow_fallback
         self.model = model
         self.voice_description = voice_description or (
             "Divya's voice is expressive and warm in delivery, with a very close recording "
@@ -80,14 +106,24 @@ class HindiTTSService:
     def load(self) -> None:
         if self._model is not None:
             return
+        token = hf_token()
         if self.backend == "indic-parler":
             from parler_tts import ParlerTTSForConditionalGeneration
             from transformers import AutoTokenizer
 
             device = self._resolve_device()
-            self._model = ParlerTTSForConditionalGeneration.from_pretrained(self.model).to(device)
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model)
-            self._desc_tokenizer = AutoTokenizer.from_pretrained(self._model.config.text_encoder._name_or_path)
+            self._model = ParlerTTSForConditionalGeneration.from_pretrained(self.model, token=token).to(device)
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model, token=token)
+            self._desc_tokenizer = AutoTokenizer.from_pretrained(self._model.config.text_encoder._name_or_path,
+                                                                 token=token)
+            self._device = device
+        elif self.backend == "mms-hin":
+            from transformers import AutoTokenizer, VitsModel
+
+            device = self._resolve_device()
+            repo = self.model if "mms-tts" in self.model else MMS_HINDI_REPO
+            self._model = VitsModel.from_pretrained(repo, token=token).to(device)
+            self._tokenizer = AutoTokenizer.from_pretrained(repo, token=token)
             self._device = device
         elif self.backend == "silent":
             self._model = "silent"
@@ -105,6 +141,11 @@ class HindiTTSService:
 
         device = getattr(self, "_device", "cpu")
         text = tts_safe_copy(sentence)
+        if self.backend == "mms-hin":
+            inputs = self._tokenizer(text, return_tensors="pt").to(device)
+            with torch.no_grad():
+                wav = self._model(**inputs).waveform
+            return wav.squeeze().float().cpu().numpy(), int(self._model.config.sampling_rate)
         desc = self._desc_tokenizer(self.voice_description, return_tensors="pt").to(device)
         prompt = self._tokenizer(text, return_tensors="pt").to(device)
         with torch.no_grad():
@@ -145,19 +186,22 @@ class HindiTTSService:
                 sample_rate=sr, is_silent_fallback=(self.backend == "silent"),
             )
         except Exception as e:
-            # Offline/test fallback: silent WAV so pipeline can be smoke-tested.
-            # The result is explicitly flagged; UI must show "silent fallback".
-            try:
-                est = max(1.0, len(script.split()) * 0.4)
-                _write_silent_wav(output_path, est, self.sample_rate)
-                return TTSResult(
-                    success=True, audio_path=output_path, duration_seconds=est,
-                    backend="silent-fallback", sample_rate=self.sample_rate,
-                    error=f"TTS backend failed, silent fallback used: {e}",
-                    is_silent_fallback=True,
-                )
-            except Exception as e2:
-                return TTSResult(success=False, error=f"{e}; fallback also failed: {e2}")
+            first = f"{self.backend} failed: {type(e).__name__}: {str(e)[:300]}"
+            if self.backend == "indic-parler" and self.allow_fallback:
+                # Real speech fallback (open model). Explicitly recorded in the result/manifest.
+                hint = ""
+                if "gated" in str(e).lower() or "401" in str(e) or "restricted" in str(e).lower():
+                    hint = (" | Indic Parler-TTS is a GATED repo: accept the license at "
+                            "https://huggingface.co/ai4bharat/indic-parler-tts and set HF_TOKEN "
+                            "(Kaggle: Add-ons -> Secrets -> HF_TOKEN).")
+                self.unload()
+                fb = HindiTTSService(backend="mms-hin", model=MMS_HINDI_REPO, sample_rate=self.sample_rate,
+                                     device=self.device, allow_fallback=False)
+                res = fb.synthesize_script(script, output_path, pause_seconds)
+                fb.unload()
+                res.error = (first + hint + " -> used mms-hin fallback" + (f" | {res.error}" if res.error else ""))
+                return res
+            return TTSResult(success=False, backend=self.backend, error=first)
 
     def preview(self, text: str, output_path: Path) -> TTSResult:
         return self.synthesize_script(text, output_path)
